@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Booking = require("../models/Booking");
 const Parking = require("../models/Parking");
 const Payment = require("../models/Payment");
+const { checkListingBookable } = require("../utils/listingEligibility");
 
 // Auto-cancel unpaid bookings older than 10 minutes
 const autoCancelUnpaidBookings = async () => {
@@ -45,11 +46,16 @@ exports.createBooking = async (req, res) => {
       return res.status(400).json({ message: "Start time cannot be in the past" });
     }
 
-    // check if parking exists
-    const parking = await Parking.findById(parkingId);
-    if (!parking) {
-      return res.status(404).json({ message: "Parking not found" });
+    // Booking eligibility — not found / pending / rejected / suspended / host
+    // deactivated are all enforced here, server-side, regardless of what the
+    // frontend shows. A client that already knows a parkingId (stale page,
+    // bookmark, direct API call) can never book a listing that isn't currently
+    // isApproved && isActive with an active host.
+    const eligibility = await checkListingBookable(parkingId);
+    if (!eligibility.ok) {
+      return res.status(eligibility.status).json({ message: eligibility.message });
     }
+    const parking = eligibility.parking;
 
     const hours = Math.max(1, (end - start) / (1000 * 60 * 60));
     const totalPrice = Math.round(hours * parking.pricePerHour);
@@ -356,6 +362,13 @@ exports.extendBooking = async (req, res) => {
 
     if (["completed", "cancelled", "refunded"].includes(booking.status)) {
       return res.status(400).json({ message: "Cannot extend a completed, cancelled or refunded booking" });
+    }
+
+    // A listing can be suspended/rejected after the original booking was made —
+    // re-check current eligibility before allowing more time to be added to it.
+    const eligibility = await checkListingBookable(booking.parkingId._id);
+    if (!eligibility.ok) {
+      return res.status(eligibility.status).json({ message: eligibility.message });
     }
 
     const addedMs = Number(hours) * 60 * 60 * 1000;

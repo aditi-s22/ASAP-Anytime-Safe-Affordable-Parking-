@@ -4,6 +4,7 @@ const qrcode = require("qrcode");
 const Booking = require("../models/Booking");
 const Payment = require("../models/Payment");
 const Notification = require("../models/Notification");
+const { checkListingBookable } = require("../utils/listingEligibility");
 
 const hasRealRazorpayKeys = () =>
   Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
@@ -41,6 +42,13 @@ exports.createOrder = async (req, res) => {
     }
     if (booking.paymentStatus === "paid") {
       return res.status(400).json({ message: "Booking is already paid" });
+    }
+
+    // The listing may have been suspended/rejected after this booking was created
+    // but before payment — don't let a driver pay for a spot that's no longer eligible.
+    const eligibility = await checkListingBookable(booking.parkingId);
+    if (!eligibility.ok) {
+      return res.status(eligibility.status).json({ message: eligibility.message });
     }
 
     const amountInPaise = Math.round(booking.totalPrice * 100);
