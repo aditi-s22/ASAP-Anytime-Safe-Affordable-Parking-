@@ -98,7 +98,7 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
           onClick={onClick}
         >
           {/* Left Block: Image */}
-          <div className="relative w-full sm:w-40 h-40 sm:h-32 flex-shrink-0 rounded-lg overflow-hidden">
+          <div className="relative w-full sm:w-32 h-40 sm:h-32 flex-shrink-0 rounded-lg overflow-hidden">
             <img
               src={imageSrc}
               onError={handleImageError}
@@ -127,7 +127,7 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
           </div>
 
           {/* Right Block: Content */}
-          <div className="flex-1 flex flex-col justify-between py-0.5">
+          <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
             <div>
               <div className="flex justify-between items-start gap-2 mb-1.5">
                 <h3 className="font-semibold text-slate-900 text-base leading-snug truncate max-w-[80%]">
@@ -142,9 +142,9 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
               </div>
 
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-500 text-xs mb-3">
-                <div className="flex items-center">
-                  <span className="material-symbols-outlined text-[14px] mr-1 text-slate-400">location_on</span>
-                  <span className="truncate max-w-[140px]">
+                <div className="flex items-center min-w-0">
+                  <span className="material-symbols-outlined text-[14px] mr-1 text-slate-400 flex-shrink-0">location_on</span>
+                  <span className="inline-block truncate max-w-[140px] align-middle" title={data.address}>
                     {data.distance !== undefined ? `${data.distance.toFixed(2)} km away` : data.address}
                   </span>
                 </div>
@@ -160,7 +160,7 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
             </div>
 
             {/* Price & Actions */}
-            <div className="flex justify-between items-end pt-3 border-t border-slate-100 mt-auto">
+            <div className="flex flex-wrap justify-between items-center gap-y-2 pt-2.5 border-t border-slate-100 mt-auto">
               <div className="flex flex-col">
                 <span className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Rate / Hr</span>
                 <div className="flex items-end gap-1.5">
@@ -173,11 +173,11 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
                 </div>
               </div>
 
-              <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+              <div className="flex gap-1.5" onClick={(e) => e.stopPropagation()}>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="px-3 !h-8 text-xs"
+                  className="px-2.5 !h-8 text-xs"
                   onClick={handleDirections}
                 >
                   Directions
@@ -185,7 +185,7 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
                 <Button
                   variant="primary"
                   size="sm"
-                  className="px-4 !h-8 text-xs"
+                  className="px-3.5 !h-8 text-xs"
                   onClick={() => setIsBookingOpen(true)}
                   disabled={isFull}
                 >
@@ -269,9 +269,9 @@ export default function ParkingCard({ data, isSelected = false, onClick, layout 
 
             <div className="flex flex-col gap-1.5 text-slate-500 mb-3">
               <div className="flex items-center gap-4">
-                <div className="flex items-center">
-                  <span className="material-symbols-outlined text-[16px] mr-1 text-slate-400">location_on</span>
-                  <span className="text-xs font-medium truncate max-w-[150px]">
+                <div className="flex items-center min-w-0">
+                  <span className="material-symbols-outlined text-[16px] mr-1 text-slate-400 flex-shrink-0">location_on</span>
+                  <span className="text-xs font-medium inline-block truncate max-w-[150px] align-middle" title={data.address}>
                     {data.distance !== undefined ? `${data.distance.toFixed(2)} km away` : data.address}
                   </span>
                 </div>

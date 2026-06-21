@@ -17,6 +17,17 @@ import {
   createTicket
 } from '../services/api';
 import { normalizeImageUrl } from '../utils/imageHelper';
+const safeFormatDate = (dateVal, options = {}) => {
+  if (!dateVal) return "N/A";
+  const d = new Date(dateVal);
+  return isNaN(d.getTime()) ? "N/A" : d.toLocaleDateString(undefined, options);
+};
+
+const safeFormatTime = (dateVal, options = {}) => {
+  if (!dateVal) return "N/A";
+  const d = new Date(dateVal);
+  return isNaN(d.getTime()) ? "N/A" : d.toLocaleTimeString([], options);
+};
 
 export default function UserDashboard() {
   const { user, loading, updateUser } = useContext(AuthContext);
@@ -198,7 +209,12 @@ export default function UserDashboard() {
     try {
       setSubmittingReview(true);
       setReviewError(null);
-      await submitParkingReview(reviewBooking.parkingId._id, {
+      const parkingId = reviewBooking.parkingId?._id || reviewBooking.parkingId;
+      if (!parkingId) {
+        setReviewError("Parking spot details are missing.");
+        return;
+      }
+      await submitParkingReview(parkingId, {
         rating: reviewRating,
         feedback: reviewFeedback,
         bookingId: reviewBooking._id
@@ -358,8 +374,9 @@ export default function UserDashboard() {
 
             <button
               onClick={() => {
-                if (recentlyCompleted.length > 0) {
-                  navigate(`/parking/${recentlyCompleted[0].parkingId._id}`);
+                if (recentlyCompleted.length > 0 && recentlyCompleted[0].parkingId) {
+                  const targetId = recentlyCompleted[0].parkingId._id || recentlyCompleted[0].parkingId;
+                  navigate(`/parking/${targetId}`);
                 } else {
                   navigate('/');
                 }
@@ -384,7 +401,7 @@ export default function UserDashboard() {
                 <button onClick={() => handleTabChange('saved')} className="text-xs text-accent-600 hover:underline font-medium">View All</button>
               </div>
               <div className="flex gap-3 overflow-x-auto pb-1">
-                {favorites.map((spot) => (
+                {favorites.filter(spot => spot && typeof spot === "object").map((spot) => (
                   <button
                     key={spot._id}
                     onClick={() => navigate(`/parking/${spot._id}`)}
@@ -461,11 +478,11 @@ export default function UserDashboard() {
                           <div className="flex items-center gap-4 text-xs text-slate-500">
                             <div className="flex items-center gap-1">
                               <span className="material-symbols-outlined text-[14px]">calendar_today</span>
-                              {new Date(upcomingBooking.startTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                              {safeFormatDate(upcomingBooking.startTime, { weekday: 'short', month: 'short', day: 'numeric' })}
                             </div>
                             <div className="flex items-center gap-1">
                               <span className="material-symbols-outlined text-[14px]">schedule</span>
-                              {new Date(upcomingBooking.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(upcomingBooking.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {safeFormatTime(upcomingBooking.startTime, { hour: '2-digit', minute: '2-digit' })} - {safeFormatTime(upcomingBooking.endTime, { hour: '2-digit', minute: '2-digit' })}
                             </div>
                           </div>
                         </div>
@@ -526,7 +543,7 @@ export default function UserDashboard() {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         {recentlyCompleted.map(b => {
                           const spot = b.parkingId;
-                          if (!spot) return null;
+                          if (!spot || typeof spot !== "object") return null;
                           return (
                             <div key={b._id} className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden hover:shadow-md transition-shadow flex flex-col">
                               {spot.images?.[0]?.url && (
@@ -576,11 +593,11 @@ export default function UserDashboard() {
                             <div className="flex items-center text-sm text-slate-500 gap-4 flex-wrap">
                               <div className="flex items-center gap-1.5">
                                 <span className="material-symbols-outlined text-[16px]">schedule</span>
-                                {new Date(b.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(b.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                {safeFormatTime(b.startTime, {hour: '2-digit', minute:'2-digit'})} - {safeFormatTime(b.endTime, {hour: '2-digit', minute:'2-digit'})}
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <span className="material-symbols-outlined text-[16px]">calendar_month</span>
-                                {new Date(b.startTime).toLocaleDateString()}
+                                {safeFormatDate(b.startTime)}
                               </div>
                             </div>
                           </div>
@@ -696,7 +713,7 @@ export default function UserDashboard() {
                             </tr>
                           </thead>
                           <tbody>
-                            {favorites.map((spot) => {
+                            {favorites.filter(spot => spot && typeof spot === "object").map((spot) => {
                               const spotCoords = spot.location?.coordinates;
                               const calculateDistance = (coords) => {
                                 if (!userCoords || !coords || coords.length < 2) return "1.2 km";
@@ -716,7 +733,7 @@ export default function UserDashboard() {
                                 const spotBookings = bookings.filter(b => b.parkingId?._id === spotId || b.parkingId === spotId);
                                 if (spotBookings.length === 0) return "Never";
                                 const latest = new Date(Math.max(...spotBookings.map(b => new Date(b.createdAt))));
-                                return latest.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                                return safeFormatDate(latest, { month: 'short', day: 'numeric', year: 'numeric' });
                               };
 
                               return (
@@ -804,7 +821,7 @@ export default function UserDashboard() {
                             bookings.filter(b => b.paymentStatus === 'paid').map(b => (
                               <tr key={b._id} className="border-b border-slate-100 hover:bg-slate-50">
                                 <td className="p-4 text-xs text-slate-500">
-                                  {new Date(b.createdAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                                  {safeFormatDate(b.createdAt, { dateStyle: 'medium' })}
                                 </td>
                                 <td className="p-4">
                                   <div className="font-medium text-slate-900 text-sm">{b.parkingId?.title || "Deleted Spot"}</div>
@@ -926,13 +943,13 @@ export default function UserDashboard() {
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider block">Arrival Date</span>
                     <span className="text-slate-900 font-semibold text-sm">
-                      {new Date(selectedTicket.startTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                      {safeFormatDate(selectedTicket.startTime, { weekday: 'short', month: 'short', day: 'numeric' })}
                     </span>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider block">Time Slot</span>
                     <span className="text-slate-900 font-semibold text-sm">
-                      {new Date(selectedTicket.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(selectedTicket.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {safeFormatTime(selectedTicket.startTime, { hour: '2-digit', minute: '2-digit' })} - {safeFormatTime(selectedTicket.endTime, { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
                 </div>

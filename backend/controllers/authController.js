@@ -26,7 +26,7 @@ const setRefreshCookie = (res, refreshToken) => {
     secure: isProd,
     sameSite: isProd ? "none" : "lax",
     maxAge: REFRESH_COOKIE_MAX_AGE,
-    path: "/api/auth"
+    path: "/"
   });
 };
 
@@ -177,7 +177,7 @@ exports.refreshAccessToken = async (req, res) => {
 exports.logout = async (req, res) => {
   const isProd = process.env.NODE_ENV === "production";
   res.clearCookie(REFRESH_COOKIE_NAME, {
-    path: "/api/auth",
+    path: "/",
     httpOnly: true,
     secure: isProd,
     sameSite: isProd ? "none" : "lax"

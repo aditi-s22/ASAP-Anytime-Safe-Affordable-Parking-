@@ -37,13 +37,13 @@ export default function Success() {
            </motion.div>
 
            <h1 className="text-2xl font-semibold text-slate-900 mb-2">Booking Confirmed</h1>
-           <p className="text-slate-500 mb-8">Your parking spot at <strong className="text-slate-900 font-semibold">{summary.parking.name}</strong> is secured.</p>
+           <p className="text-slate-500 mb-8">Your parking spot at <strong className="text-slate-900 font-semibold">{summary.parking?.name || summary.parking?.title}</strong> is secured.</p>
 
            <div className="bg-slate-50 rounded-lg p-5 mb-6 border border-slate-200 text-left">
               <div className="grid grid-cols-2 gap-4">
                  <div>
                    <p className="text-xs text-slate-500 uppercase font-medium tracking-wider mb-1">Date</p>
-                   <p className="font-medium text-slate-900">{new Date(summary.date).toLocaleDateString()}</p>
+                    <p className="font-medium text-slate-900">{summary.date && !isNaN(new Date(summary.date).getTime()) ? new Date(summary.date).toLocaleDateString() : "N/A"}</p>
                  </div>
                  <div>
                    <p className="text-xs text-slate-500 uppercase font-medium tracking-wider mb-1">Arrival Time</p>

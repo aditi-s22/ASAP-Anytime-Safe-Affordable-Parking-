@@ -151,10 +151,10 @@ export default function Checkout() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-slate-200">
-                     <div>
-                       <p className="text-xs text-slate-500 uppercase font-medium tracking-wider mb-1">Date</p>
-                       <p className="font-medium text-slate-900">{new Date(date).toLocaleDateString()}</p>
-                     </div>
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase font-medium tracking-wider mb-1">Date</p>
+                        <p className="font-medium text-slate-900">{date && !isNaN(new Date(date).getTime()) ? new Date(date).toLocaleDateString() : "N/A"}</p>
+                      </div>
                      <div>
                        <p className="text-xs text-slate-500 uppercase font-medium tracking-wider mb-1">Arrival Time</p>
                        <p className="font-medium text-slate-900">{time}</p>

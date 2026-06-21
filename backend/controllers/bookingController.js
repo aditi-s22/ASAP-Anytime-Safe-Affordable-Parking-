@@ -59,14 +59,14 @@ exports.createBooking = async (req, res) => {
 
     const hours = Math.max(1, (end - start) / (1000 * 60 * 60));
     const totalPrice = Math.round(hours * parking.pricePerHour);
-    const maxSlots = parking.availableSlots || 1;
+    const maxSlots = parking.slots || parking.totalSlots || 1;
 
     // Pending (unpaid) bookings only count against availability while still inside the
     // 10-minute auto-cancel window (see sweep below); paid bookings always count.
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
     const overlapFilter = {
       parkingId,
-      status: { $ne: "cancelled" },
+      status: { $nin: ["cancelled", "completed", "refunded"] },
       startTime: { $lt: end },
       endTime: { $gt: start },
       $or: [
@@ -354,83 +354,138 @@ exports.checkOutBooking = async (req, res) => {
 
 // EXTEND BOOKING (POST /bookings/:id/extend)
 exports.extendBooking = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
     const { hours } = req.body;
     if (!hours || isNaN(hours) || Number(hours) <= 0) {
       return res.status(400).json({ message: "Valid positive duration (hours) is required" });
     }
 
-    const booking = await Booking.findById(req.params.id).populate("parkingId");
-    if (!booking) return res.status(404).json({ message: "Booking not found" });
+    let booking;
+    let extraPrice;
+
+    const currentBooking = await Booking.findById(req.params.id).populate("parkingId");
+    if (!currentBooking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
 
     // Enforce authorization
-    if (booking.userId.toString() !== req.user._id.toString() && req.user.role !== "admin") {
+    if (currentBooking.userId.toString() !== req.user._id.toString() && req.user.role !== "admin") {
       return res.status(403).json({ message: "Not authorized to extend this booking" });
     }
 
-    if (["completed", "cancelled", "refunded"].includes(booking.status)) {
+    if (["completed", "cancelled", "refunded"].includes(currentBooking.status)) {
       return res.status(400).json({ message: "Cannot extend a completed, cancelled or refunded booking" });
     }
 
     // A listing can be suspended/rejected after the original booking was made —
     // re-check current eligibility before allowing more time to be added to it.
-    const eligibility = await checkListingBookable(booking.parkingId._id);
+    const eligibility = await checkListingBookable(currentBooking.parkingId._id);
     if (!eligibility.ok) {
       return res.status(eligibility.status).json({ message: eligibility.message });
     }
 
     const addedMs = Number(hours) * 60 * 60 * 1000;
-    const currentEnd = new Date(booking.endTime);
+    const currentEnd = new Date(currentBooking.endTime);
     const newEnd = new Date(currentEnd.getTime() + addedMs);
 
     // Verify slot availability in database for the extension period
-    const maxSlots = booking.parkingId.totalSlots || booking.parkingId.slots || 1;
+    const maxSlots = currentBooking.parkingId.slots || currentBooking.parkingId.totalSlots || 1;
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
     const overlapFilter = {
-      parkingId: booking.parkingId._id,
-      status: { $in: ["pending", "paid", "checked_in", "active"] },
-      _id: { $ne: booking._id },
+      parkingId: currentBooking.parkingId._id,
+      status: { $nin: ["cancelled", "completed", "refunded"] },
+      _id: { $ne: currentBooking._id },
       startTime: { $lt: newEnd },
-      endTime: { $gt: currentEnd }
+      endTime: { $gt: currentEnd },
+      $or: [
+        { paymentStatus: "paid" },
+        { createdAt: { $gte: tenMinutesAgo } }
+      ]
     };
 
-    const overlappingCount = await Booking.countDocuments(overlapFilter);
-    if (overlappingCount >= maxSlots) {
-      return res.status(400).json({ message: "No slots available for this extension period" });
+    try {
+      await session.withTransaction(async () => {
+        const overlappingCount = await Booking.countDocuments(overlapFilter).session(session);
+        if (overlappingCount >= maxSlots) {
+          throw new Error("NO_SLOTS_AVAILABLE");
+        }
+
+        // Lock writing on the Parking listing to serialize concurrent extensions/bookings
+        await Parking.updateOne({ _id: currentBooking.parkingId._id }, { $inc: { totalBookings: 1 } }, { session });
+
+        extraPrice = Math.round(Number(hours) * currentBooking.parkingId.pricePerHour);
+
+        // Fetch & Update booking fields
+        booking = await Booking.findById(req.params.id).session(session);
+        booking.endTime = newEnd;
+        booking.totalPrice = (booking.totalPrice || 0) + extraPrice;
+        await booking.save({ session });
+
+        // Create extension Payment record
+        const Payment = require("../models/Payment");
+        await Payment.create([{
+          bookingId: booking._id,
+          razorpayOrderId: `ext_order_${booking._id}_${Date.now()}`,
+          razorpayPaymentId: `ext_pay_${booking._id}_${Date.now()}`,
+          amount: extraPrice,
+          status: "captured"
+        }], { session });
+      });
+    } catch (txError) {
+      if (txError.message === "NO_SLOTS_AVAILABLE") {
+        throw txError;
+      }
+      const transactionsUnsupported = /Transaction numbers are only allowed|IllegalOperation|Transactions are not supported/i.test(txError.message || "");
+      if (!transactionsUnsupported) {
+        throw txError;
+      }
+      // Non-transactional fallback
+      console.warn("MongoDB transactions unsupported on this deployment — falling back to best-effort overlap check for booking extension.");
+      const overlappingCount = await Booking.countDocuments(overlapFilter);
+      if (overlappingCount >= maxSlots) {
+        throw new Error("NO_SLOTS_AVAILABLE");
+      }
+
+      extraPrice = Math.round(Number(hours) * currentBooking.parkingId.pricePerHour);
+      booking = await Booking.findById(req.params.id);
+      booking.endTime = newEnd;
+      booking.totalPrice = (booking.totalPrice || 0) + extraPrice;
+      await booking.save();
+
+      const Payment = require("../models/Payment");
+      await Payment.create({
+        bookingId: booking._id,
+        razorpayOrderId: `ext_order_${booking._id}_${Date.now()}`,
+        razorpayPaymentId: `ext_pay_${booking._id}_${Date.now()}`,
+        amount: extraPrice,
+        status: "captured"
+      });
     }
 
-    const extraPrice = Math.round(Number(hours) * booking.parkingId.pricePerHour);
-
-    // Update booking fields
-    booking.endTime = newEnd;
-    booking.totalPrice = (booking.totalPrice || 0) + extraPrice;
-    await booking.save();
-
-    // Create extension Payment record
-    const Payment = require("../models/Payment");
-    await Payment.create({
-      bookingId: booking._id,
-      razorpayOrderId: `ext_order_${booking._id}_${Date.now()}`,
-      razorpayPaymentId: `ext_pay_${booking._id}_${Date.now()}`,
-      amount: extraPrice,
-      status: "captured"
-    });
-
-    // Create user notification
+    // Outside transaction, perform non-database updates (Socket.io notification, etc.)
     const Notification = require("../models/Notification");
     const notification = await Notification.create({
       userId: booking.userId,
       title: "Booking Extended Successfully",
-      message: `Your booking for "${booking.parkingId.title}" is extended by ${hours} hr(s). Extra charged: ₹${extraPrice}.`,
+      message: `Your booking for "${currentBooking.parkingId.title}" is extended by ${hours} hr(s). Extra charged: ₹${extraPrice}.`,
       type: "booking_confirmed"
     });
     
     const io = req.app.get("io");
     if (io) {
       io.to(booking.userId.toString()).emit("notification", notification);
+      io.emit("availability_change", { parkingId: currentBooking.parkingId._id });
     }
 
     res.json({ message: "Booking extended successfully", booking, extraPrice });
+
   } catch (error) {
+    if (error.message === "NO_SLOTS_AVAILABLE") {
+      return res.status(400).json({ message: "No slots available for this extension period" });
+    }
     res.status(500).json({ error: error.message });
+  } finally {
+    session.endSession();
   }
 };

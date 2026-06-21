@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "../components/Navbar";
 import SearchBar from "../components/SearchBar";
@@ -116,6 +116,7 @@ const EmptyState = ({ onSuggestionClick }) => (
 
 export default function SearchParking() {
   const { user } = useContext(AuthContext);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [recommended, setRecommended] = useState([]);
   const [deals, setDeals] = useState([]);
@@ -230,9 +231,13 @@ export default function SearchParking() {
         requestLocation();
         return;
      }
-     setSearchQuery(query);
      const destination = POPULAR_DESTINATIONS.find(d => d.label === query);
-     executeSearch(query, destination?.coords || null);
+     const params = { q: query };
+     if (destination?.coords) {
+        params.lat = destination.coords.lat.toString();
+        params.lng = destination.coords.lng.toString();
+     }
+     setSearchParams(params);
   };
 
   const executeSearch = async (query, coords = null) => {
@@ -271,22 +276,45 @@ export default function SearchParking() {
        console.error("Search failed", e);
        setSearchResults([]);
        setSelectedSpot(null);
-     } finally {
-       setLoading(false);
-     }
-  };
+      } finally {
+        setLoading(false);
+      }
+   };
 
-  const fadeInUp = {
+  useEffect(() => {
+    const q = searchParams.get("q");
+    const lat = searchParams.get("lat");
+    const lng = searchParams.get("lng");
+
+    if (q) {
+      const coords = lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : null;
+      setSearchQuery(q);
+      executeSearch(q, coords);
+    } else {
+      setSearchQuery("");
+      setSearchResults(null);
+      setSelectedSpot(null);
+      setSearchedLocation(null);
+    }
+  }, [searchParams]);
+
+   const fadeInUp = {
     hidden: { opacity: 0, y: 20 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } }
   };
 
   const handleReviewSubmit = async (e) => {
     e.preventDefault();
-    if (!pendingReviewBooking) return;
-    setReviewSubmitting(true);
+    if (!user || !pendingReviewBooking) return;
     try {
-      await submitParkingReview(pendingReviewBooking.parkingId._id, {
+      const parkingId = pendingReviewBooking.parkingId?._id || pendingReviewBooking.parkingId;
+      if (!parkingId) {
+        alert("Parking spot details are missing.");
+        setPendingReviewBooking(null);
+        return;
+      }
+      setReviewSubmitting(true);
+      await submitParkingReview(parkingId, {
         rating: reviewRating,
         feedback: reviewComment,
         bookingId: pendingReviewBooking._id
@@ -329,13 +357,11 @@ export default function SearchParking() {
       list = list.filter(s => (s.rating || 0) >= 4.5);
     }
 
-    // Filter by Availability
-    if (filterAvailability === "available") {
-      list = list.filter(s => {
-        const slots = s.availableSpots !== undefined ? s.availableSpots : (s.availableSlots || 0);
-        return slots > 0;
-      });
-    }
+    // Filter by Availability (Booked-out locations disappear when capacity reaches zero)
+    list = list.filter(s => {
+      const slots = s.availableSpots !== undefined ? s.availableSpots : (s.availableSlots || 0);
+      return slots > 0;
+    });
 
     // Sorting
     if (sortBy === "distance") {
@@ -361,13 +387,13 @@ export default function SearchParking() {
 
   // Diversify imagery + apply card index variety once per render pass, per section,
   // so two adjacent cards never show the same stock photo.
-  const trendingSpots = assignDiverseImages(recommended.slice(0, 4));
-  const popularNearYou = assignDiverseImages(deals.slice(0, 4));
+  const trendingSpots = assignDiverseImages(recommended.filter(Boolean).slice(0, 4));
+  const popularNearYou = assignDiverseImages(deals.filter(Boolean).slice(0, 4));
   const weekendFavorites = assignDiverseImages(
-    [...recommended].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, 4)
+    [...recommended].filter(Boolean).sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, 4)
   );
-  const recentlyBookedDisplay = assignDiverseImages(recentBookedSpots);
-  const savedSpotsDisplay = assignDiverseImages(savedSpots.slice(0, 4));
+  const recentlyBookedDisplay = assignDiverseImages(recentBookedSpots.filter(Boolean));
+  const savedSpotsDisplay = assignDiverseImages(savedSpots.filter(Boolean).slice(0, 4));
 
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans">
@@ -423,7 +449,17 @@ export default function SearchParking() {
                initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.15, duration: 0.4 }}
                className="w-full max-w-3xl sticky top-[88px] z-40"
              >
-                <SearchBar onSearch={(q, d, t, coords) => { setSearchQuery(q); executeSearch(q, coords); }} initialQuery={searchQuery} />
+                <SearchBar
+                  onSearch={(q, d, t, coords) => {
+                    const params = { q };
+                    if (coords && coords.lat && coords.lng) {
+                      params.lat = coords.lat.toString();
+                      params.lng = coords.lng.toString();
+                    }
+                    setSearchParams(params);
+                  }}
+                  initialQuery={searchQuery}
+                />
              </motion.div>
            </div>
         </section>
@@ -565,9 +601,7 @@ export default function SearchParking() {
                         {/* Clear Search & Header Actions */}
                         <button
                           onClick={() => {
-                            setSearchResults(null);
-                            setSelectedSpot(null);
-                            setSearchedLocation(null);
+                            setSearchParams({});
                           }}
                           className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5"
                         >
@@ -651,15 +685,15 @@ export default function SearchParking() {
                   </div>
 
                   {searchResults.length === 0 ? (
-                    <EmptyState onSuggestionClick={(loc) => { setSearchQuery(loc); executeSearch(loc); }} />
+                    <EmptyState onSuggestionClick={(loc) => setSearchParams({ q: loc })} />
                   ) : (
                     <div className="flex flex-col lg:flex-row gap-6 h-[750px]">
-                      {/* Left panel: Scrollable List View (40% width) */}
-                      <div className="w-full lg:w-[40%] h-full flex flex-col gap-4 overflow-y-auto pr-2">
+                      {/* Left panel: Scrollable List View (42% width) */}
+                      <div className="w-full lg:w-[42%] xl:w-[38%] h-full flex flex-col gap-4 overflow-y-auto pr-2">
                         {loading ? (
                           <SearchSkeleton />
                         ) : sortedResults.length === 0 ? (
-                          <EmptyState onSuggestionClick={(loc) => { setSearchQuery(loc); executeSearch(loc); }} />
+                          <EmptyState onSuggestionClick={(loc) => setSearchParams({ q: loc })} />
                         ) : (
                           assignDiverseImages(sortedResults).map((spot, i) => (
                             <ParkingCard
@@ -674,8 +708,8 @@ export default function SearchParking() {
                         )}
                       </div>
 
-                      {/* Right panel: Dynamic Map Section (60% width) */}
-                      <div className="w-full lg:w-[60%] h-[400px] lg:h-full relative rounded-xl overflow-hidden border border-slate-200">
+                      {/* Right panel: Dynamic Map Section (58% width) */}
+                      <div className="w-full lg:w-[58%] xl:w-[62%] h-[400px] lg:h-full relative rounded-xl overflow-hidden border border-slate-200">
                         <MapSection
                           parkings={sortedResults}
                           selectedSpot={selectedSpot}

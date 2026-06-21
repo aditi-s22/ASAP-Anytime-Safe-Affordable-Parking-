@@ -2,6 +2,32 @@ const Parking = require("../models/Parking");
 const Booking = require("../models/Booking");
 const mongoose = require("mongoose");
 
+const getDynamicAvailableSlots = async (parkingDoc) => {
+  const now = new Date();
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+  const activeBookingsCount = await Booking.countDocuments({
+    parkingId: parkingDoc._id,
+    startTime: { $lte: now },
+    endTime: { $gte: now },
+    status: { $nin: ["cancelled", "completed", "refunded"] },
+    $or: [
+      { paymentStatus: "paid" },
+      { createdAt: { $gte: tenMinutesAgo } }
+    ]
+  });
+  const capacity = parkingDoc.slots || parkingDoc.totalSlots || 1;
+  return Math.max(0, capacity - activeBookingsCount);
+};
+
+const addDynamicSlots = async (parking) => {
+  if (!parking) return null;
+  const doc = parking.toObject ? parking.toObject() : parking;
+  const dynSlots = await getDynamicAvailableSlots(doc);
+  doc.availableSlots = dynSlots;
+  doc.availableSpots = dynSlots;
+  return doc;
+};
+
 // ADD PARKING
 // Workflow 2 (listing verification) is independent of Workflow 1 (host verification) —
 // this only checks that Workflow 1 has been completed once; it never re-triggers it.
@@ -47,7 +73,8 @@ exports.getAllParking = async (req, res) => {
   try {
     // Public endpoint, no auth — never expose host email/phone here.
     const parkings = await Parking.find({ isActive: true, isApproved: true }).populate("hostId", "name verifiedHost");
-    res.json(parkings);
+    const updated = await Promise.all(parkings.map(p => addDynamicSlots(p)));
+    res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -59,7 +86,8 @@ exports.getParkingById = async (req, res) => {
     // Public endpoint, no auth — never expose host email/phone here.
     const parking = await Parking.findById(req.params.id).populate("hostId", "name verifiedHost");
     if (!parking) return res.status(404).json({ message: "Parking not found" });
-    res.json(parking);
+    const updated = await addDynamicSlots(parking);
+    res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -124,8 +152,8 @@ exports.getNearbyParking = async (req, res) => {
     }
 
     // Attach distance calculated by Haversine and formatting
-    const results = parkings.map((p) => {
-      const obj = p.toObject();
+    const results = await Promise.all(parkings.map(async (p) => {
+      const obj = await addDynamicSlots(p);
       const coords = p.location.coordinates;
       obj.distance = calculateDistance(latitude, longitude, coords[1], coords[0]);
       if (isAlternative) {
@@ -133,7 +161,7 @@ exports.getNearbyParking = async (req, res) => {
       }
       console.log(`[Host Listing Visible] Spot: "${p.title}" (ID: ${p._id}) is approved and visible in nearby search.`);
       return obj;
-    });
+    }));
 
     console.log(`[Listing Search Results] Found ${results.length} spots in nearby search. Lng/Lat: [${longitude}, ${latitude}] | isAlternative: ${isAlternative}`);
 
@@ -365,7 +393,8 @@ exports.searchParking = async (req, res) => {
     }
     const parkings = await Parking.find(filter).populate("hostId", "name verifiedHost").limit(10);
     console.log(`[Listing Search Results] Keyword: "${query || ""}" | Found ${parkings.length} matching spots: ` + JSON.stringify(parkings.map(p => ({ id: p._id, title: p.title }))));
-    res.json(parkings);
+    const updated = await Promise.all(parkings.map(p => addDynamicSlots(p)));
+    res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -388,7 +417,8 @@ exports.getLiveAvailability = async (req, res) => {
       }
     });
 
-    const sum = parkings.reduce((acc, p) => acc + (p.availableSlots || 0), 0);
+    const updated = await Promise.all(parkings.map(p => addDynamicSlots(p)));
+    const sum = updated.reduce((acc, p) => acc + (p.availableSlots || 0), 0);
     res.json({ availableSpots: sum });
   } catch (error) {
     // If geo index fails or DB fails
@@ -400,7 +430,8 @@ exports.getLiveAvailability = async (req, res) => {
 exports.getRecommended = async (req, res) => {
   try {
     const parkings = await Parking.find({ isActive: true, isApproved: true }).sort({ rating: -1, totalBookings: -1 }).limit(4);
-    res.json(parkings);
+    const updated = await Promise.all(parkings.map(p => addDynamicSlots(p)));
+    res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -410,7 +441,8 @@ exports.getRecommended = async (req, res) => {
 exports.getDeals = async (req, res) => {
   try {
     const parkings = await Parking.find({ isActive: true, isApproved: true, discountPercentage: { $gt: 0 } }).sort({ discountPercentage: -1 }).limit(4);
-    res.json(parkings);
+    const updated = await Promise.all(parkings.map(p => addDynamicSlots(p)));
+    res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
