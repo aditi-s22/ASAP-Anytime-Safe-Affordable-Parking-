@@ -124,7 +124,8 @@ exports.createBooking = async (req, res) => {
   }
 };
 
-// VERIFY QR TOKEN (host-of-this-spot or admin only — marks arrival on first scan)
+// VERIFY QR TOKEN (host of this spot, admin, OR the driver who owns this booking —
+// the driver checking in with their own ticket is a normal, expected self-service path)
 exports.verifyQRToken = async (req, res) => {
   try {
     const { qrToken } = req.params;
@@ -136,9 +137,11 @@ exports.verifyQRToken = async (req, res) => {
       return res.status(404).json({ message: "Invalid QR code ticket" });
     }
 
+    const driverId = booking.userId?._id ? booking.userId._id.toString() : booking.userId.toString();
     const isHost = booking.parkingId?.hostId?.toString() === req.user._id.toString();
-    if (!isHost && req.user.role !== "admin") {
-      return res.status(403).json({ message: "Not authorized to scan tickets for this spot" });
+    const isOwner = driverId === req.user._id.toString();
+    if (!isHost && !isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ message: "Not authorized to check in this booking" });
     }
 
     // Expiration check
@@ -157,16 +160,40 @@ exports.verifyQRToken = async (req, res) => {
       booking.checkedInAt = new Date();
       await booking.save();
 
-      // Create notification
       const Notification = require("../models/Notification");
-      const notification = await Notification.create({
-        userId: booking.userId,
+      const io = req.app.get("io");
+
+      // Notify the driver. booking.userId is populated above (a User doc, not an
+      // ObjectId) — calling .toString() on it directly returns "[object Object]",
+      // silently sending the live socket push to a nonexistent room while the
+      // Notification document still saves fine, which is why check-ins never
+      // showed up in real time. Use the resolved driverId string instead.
+      const driverNotification = await Notification.create({
+        userId: driverId,
         title: "Checked In via QR Scan",
         message: `You have successfully checked in at "${booking.parkingId.title}".`,
         type: "check_in_reminder"
       });
-      const io = req.app.get("io");
-      if (io) io.to(booking.userId.toString()).emit("notification", notification);
+      if (io) io.to(driverId).emit("notification", driverNotification);
+
+      // Notify the host too — previously only the driver learned about a check-in,
+      // so the host dashboard had no signal that a vehicle had arrived.
+      const hostId = booking.parkingId?.hostId;
+      if (hostId) {
+        const hostNotification = await Notification.create({
+          userId: hostId,
+          title: "Driver Checked In",
+          message: `${booking.userId?.name || "A driver"} has checked in at "${booking.parkingId.title}".`,
+          type: "host_alert"
+        });
+        if (io) {
+          io.to(hostId.toString()).emit("notification", hostNotification);
+          // Dedicated event so dashboards can refetch precisely instead of
+          // reacting to every unrelated notification.
+          io.to(hostId.toString()).emit("booking_status_changed", { bookingId: booking._id, parkingId: booking.parkingId._id, status: "checked_in" });
+        }
+        io && io.to(driverId).emit("booking_status_changed", { bookingId: booking._id, parkingId: booking.parkingId._id, status: "checked_in" });
+      }
     }
 
     res.json({
@@ -302,7 +329,10 @@ exports.startSessionBooking = async (req, res) => {
       type: "booking_confirmed"
     });
     const io = req.app.get("io");
-    if (io) io.to(booking.userId.toString()).emit("notification", notification);
+    if (io) {
+      io.to(booking.userId.toString()).emit("notification", notification);
+      io.to(booking.userId.toString()).emit("booking_status_changed", { bookingId: booking._id, parkingId: booking.parkingId._id, status: "active" });
+    }
 
     res.json({ message: "Parking session is now active", booking });
   } catch (error) {
@@ -344,7 +374,10 @@ exports.checkOutBooking = async (req, res) => {
       type: "review_reminder"
     });
     const io = req.app.get("io");
-    if (io) io.to(booking.userId.toString()).emit("notification", notification);
+    if (io) {
+      io.to(booking.userId.toString()).emit("notification", notification);
+      io.to(booking.userId.toString()).emit("booking_status_changed", { bookingId: booking._id, parkingId: booking.parkingId._id, status: "completed" });
+    }
 
     res.json({ message: "Check-out completed successfully", booking, durationHours });
   } catch (error) {

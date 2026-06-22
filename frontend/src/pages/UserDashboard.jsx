@@ -14,7 +14,8 @@ import {
   getFavorites,
   toggleFavorite,
   extendBooking,
-  createTicket
+  createTicket,
+  manualCheckIn
 } from '../services/api';
 import { normalizeImageUrl } from '../utils/imageHelper';
 const safeFormatDate = (dateVal, options = {}) => {
@@ -53,6 +54,9 @@ export default function UserDashboard() {
 
   // Socket notification alert state
   const [socketAlert, setSocketAlert] = useState(null);
+
+  // Self-check-in state (driver checking themselves in with their own QR ticket)
+  const [checkingInId, setCheckingInId] = useState(null);
 
   // Profile Form State
   const [name, setName] = useState(user?.name || '');
@@ -189,10 +193,37 @@ export default function UserDashboard() {
 
     socketService.subscribe("new_booking", handleNewBooking);
 
+    // Picks up host-triggered status changes (session started, checked-out) so the
+    // booking card updates without the driver needing to manually refresh.
+    const handleStatusChanged = () => loadBookings();
+    socketService.subscribe("booking_status_changed", handleStatusChanged);
+
     return () => {
       socketService.unsubscribe("new_booking", handleNewBooking);
+      socketService.unsubscribe("booking_status_changed", handleStatusChanged);
     };
   }, [user]);
+
+  // Driver self-check-in using their own booking's QR token — previously the only
+  // check-in path required the host to scan/enter the token, so a driver had no way
+  // to check themselves in from their own dashboard.
+  const handleCheckIn = async (booking) => {
+    if (!booking.qrToken) {
+      alert("This booking has no ticket token to check in with.");
+      return;
+    }
+    try {
+      setCheckingInId(booking._id);
+      await manualCheckIn(booking.qrToken);
+      await loadBookings();
+    } catch (err) {
+      alert("Check-in failed: " + (err.response?.data?.message || err.message));
+    } finally {
+      setCheckingInId(null);
+    }
+  };
+
+  const canCheckIn = (b) => b.status === 'paid' && !!b.qrToken && new Date(b.startTime) <= new Date();
 
   useEffect(() => {
     if (socketAlert) {
@@ -502,6 +533,18 @@ export default function UserDashboard() {
                               <span className="material-symbols-outlined text-[16px]">qr_code</span>
                               View Ticket
                             </Button>
+                            {canCheckIn(upcomingBooking) && (
+                              <Button
+                                onClick={() => handleCheckIn(upcomingBooking)}
+                                disabled={checkingInId === upcomingBooking._id}
+                                variant="primary"
+                                size="sm"
+                                className="flex items-center gap-1.5"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                                {checkingInId === upcomingBooking._id ? 'Checking In...' : 'Check In'}
+                              </Button>
+                            )}
                             <Button
                               onClick={() => setExtendingBooking(upcomingBooking)}
                               variant="outline"
@@ -628,6 +671,18 @@ export default function UserDashboard() {
                                 >
                                   <span className="material-symbols-outlined text-[16px]">navigation</span>
                                   Navigate
+                                </Button>
+                              )}
+                              {canCheckIn(b) && (
+                                <Button
+                                  onClick={() => handleCheckIn(b)}
+                                  disabled={checkingInId === b._id}
+                                  variant="primary"
+                                  size="sm"
+                                  className="flex items-center gap-1.5"
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                                  {checkingInId === b._id ? 'Checking In...' : 'Check In'}
                                 </Button>
                               )}
                               {['paid', 'checked_in', 'active'].includes(b.status) && (

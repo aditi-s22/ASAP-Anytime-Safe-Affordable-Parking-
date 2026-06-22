@@ -6,6 +6,7 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Modal from '../components/ui/Modal';
 import { AuthContext } from '../context/AuthContext';
+import { socketService } from '../services/socket';
 import { normalizeImageUrl } from '../utils/imageHelper';
 import { geocodeAddress } from '../utils/geocode';
 import {
@@ -157,6 +158,24 @@ export default function HostDashboard() {
     }
   }, [user]);
 
+  // Real-time sync — previously HostDashboard only ever fetched once on mount, so a
+  // driver booking/checking-in/checking-out while the host already had this page
+  // open never showed up until a manual full page reload. The driver-side dashboard
+  // and Navbar already do this; the host dashboard did not.
+  useEffect(() => {
+    if (!user) return;
+    socketService.connect(user._id);
+
+    const refresh = () => loadHostData();
+    socketService.subscribe("new_booking", refresh);
+    socketService.subscribe("booking_status_changed", refresh);
+
+    return () => {
+      socketService.unsubscribe("new_booking", refresh);
+      socketService.unsubscribe("booking_status_changed", refresh);
+    };
+  }, [user]);
+
   const loadHostData = async () => {
     try {
       setHostLoading(true);
@@ -272,9 +291,13 @@ export default function HostDashboard() {
     { id: 'settings', label: 'Settings', icon: 'settings' }
   ];
 
-  const upcomingArrivals = allBookings.filter(b => 
+  const upcomingArrivals = allBookings.filter(b =>
     b.status === 'paid' && !b.checkedIn
   );
+
+  // Driver checked in (gate arrival logged) or session actively started — distinct
+  // from Upcoming Arrivals, and previously had no dedicated panel on Overview at all.
+  const activeSessions = allBookings.filter(b => ['checked_in', 'active'].includes(b.status));
 
   if (loading || hostLoading) {
     return (
@@ -394,6 +417,69 @@ export default function HostDashboard() {
                                   </td>
                                   <td className="p-4">
                                     <span className="text-[10px] bg-parking-50 text-parking-700 border border-parking-100 px-2 py-0.5 rounded uppercase font-semibold tracking-wider">Booked</span>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Active Sessions / Active Vehicles Section */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900 mb-4">Active Vehicles</h3>
+                    <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50">
+                              <th className="p-4 text-xs font-semibold uppercase text-slate-500 tracking-wider">Driver Details</th>
+                              <th className="p-4 text-xs font-semibold uppercase text-slate-500 tracking-wider">Location</th>
+                              <th className="p-4 text-xs font-semibold uppercase text-slate-500 tracking-wider">Checked In At</th>
+                              <th className="p-4 text-xs font-semibold uppercase text-slate-500 tracking-wider">Status</th>
+                              <th className="p-4 text-xs font-semibold uppercase text-slate-500 tracking-wider text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeSessions.length === 0 ? (
+                              <tr>
+                                <td colSpan="5" className="p-8 text-center text-slate-500 text-sm">No vehicles currently on-site.</td>
+                              </tr>
+                            ) : (
+                              activeSessions.map(b => (
+                                <tr key={b._id} className="border-b border-slate-100 hover:bg-slate-50">
+                                  <td className="p-4">
+                                    <div className="font-semibold text-slate-900 text-sm">{b.userId?.name}</div>
+                                    <div className="text-slate-500 text-xs">{b.userId?.phone}</div>
+                                  </td>
+                                  <td className="p-4 text-sm font-medium text-slate-700">
+                                    {b.parkingId?.title}
+                                  </td>
+                                  <td className="p-4 text-xs text-slate-500">
+                                    {(b.checkInTime || b.checkedInAt) ? new Date(b.checkInTime || b.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "N/A"}
+                                  </td>
+                                  <td className="p-4">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-semibold tracking-wider border ${
+                                      b.status === 'active'
+                                        ? 'bg-accent-400/10 text-accent-600 border-accent-400/20'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}>
+                                      {b.status === 'active' ? 'Active' : 'Checked In'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    {b.status === 'checked_in' && (
+                                      <Button onClick={() => handleStartSession(b._id)} disabled={actionLoading} variant="primary" size="sm">
+                                        Start Session
+                                      </Button>
+                                    )}
+                                    {b.status === 'active' && (
+                                      <Button onClick={() => handleCheckOut(b._id)} disabled={actionLoading} variant="primary" size="sm">
+                                        Check-Out
+                                      </Button>
+                                    )}
                                   </td>
                                 </tr>
                               ))
