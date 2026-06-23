@@ -5,9 +5,7 @@ import {
   signInWithPopup,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendEmailVerification,
-  RecaptchaVerifier,
-  linkWithPhoneNumber
+  sendEmailVerification
 } from "firebase/auth";
 
 const firebaseConfig = {
@@ -90,30 +88,7 @@ export const signInWithEmail = async (email, password) => {
   return { idToken, emailVerified: result.user.emailVerified };
 };
 
-// PHONE OTP — used by the host-onboarding phone verification step, for a user who is
-// already signed in (via email or Google). This deliberately uses linkWithPhoneNumber,
-// not signInWithPhoneNumber: the latter would sign the user into a *different* Firebase
-// identity (a new uid) instead of adding the phone as a second credential on the same
-// account — which would silently split one person into two Mongo user records.
-let recaptchaVerifier = null;
 
-export const sendPhoneOtp = async (phoneNumber, recaptchaContainerId) => {
-  requireFirebase();
-  if (!auth.currentUser) {
-    throw new Error("You must be signed in before verifying a phone number.");
-  }
-  if (!recaptchaVerifier) {
-    recaptchaVerifier = new RecaptchaVerifier(auth, recaptchaContainerId, { size: "invisible" });
-  }
-  const confirmationResult = await linkWithPhoneNumber(auth.currentUser, phoneNumber, recaptchaVerifier);
-  return confirmationResult;
-};
-
-export const confirmPhoneOtp = async (confirmationResult, code) => {
-  const result = await confirmationResult.confirm(code);
-  const idToken = await result.user.getIdToken();
-  return { idToken };
-};
 
 export const getCurrentIdToken = async (forceRefresh = false) => {
   if (!auth?.currentUser) return null;

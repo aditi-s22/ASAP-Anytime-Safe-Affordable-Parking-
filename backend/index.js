@@ -201,8 +201,20 @@ connectDB().then(async () => {
     } else {
       console.log(`[Migration] DB Verification Passed: All parking spots contain valid geospatial Point coordinates.`);
     }
+
+    // One-time startup migration: set phoneVerified = true for all users who do not have it set to true.
+    const User = require("./models/User");
+    const migrationResult = await User.updateMany(
+      { phoneVerified: { $ne: true } },
+      { $set: { phoneVerified: true } }
+    );
+    if (migrationResult.modifiedCount > 0) {
+      console.log(`[Migration] Successfully updated ${migrationResult.modifiedCount} legacy users with phoneVerified: true`);
+    } else {
+      console.log(`[Migration] No legacy users need phoneVerified updates.`);
+    }
   } catch (err) {
-    console.error("[Migration] Error verifying database coordinates:", err.message);
+    console.error("[Migration] Error running startup migrations:", err.message);
   }
 });
 

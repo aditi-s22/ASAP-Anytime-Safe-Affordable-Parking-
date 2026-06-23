@@ -118,12 +118,10 @@ exports.firebaseSession = async (req, res) => {
     user.emailVerified = Boolean(email_verified);
     if (phone_number) {
       user.phone = phone_number;
-      user.phoneVerified = true;
     } else if (clientPhone && !user.phone) {
-      // Plain, not-yet-verified phone number supplied at signup (e.g. for later host
-      // verification) — stored but not marked verified until Firebase confirms it.
       user.phone = clientPhone;
     }
+    user.phoneVerified = true;
     if (picture && !user.profileImage) {
       user.profileImage = picture;
     }

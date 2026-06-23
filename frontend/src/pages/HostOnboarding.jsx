@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useContext, useRef } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import { AuthContext } from '../context/AuthContext';
-import { createParking, applyForHost, exchangeFirebaseToken, uploadImages } from '../services/api';
-import { sendPhoneOtp, confirmPhoneOtp } from '../services/firebase';
+import { createParking, applyForHost, uploadImages } from '../services/api';
 import { geocodeAddress } from '../utils/geocode';
 
 export default function HostOnboarding() {
@@ -25,17 +24,6 @@ export default function HostOnboarding() {
     startTime: '08:00', endTime: '22:00', parkingImage: ''
   });
 
-  // OTP State
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpVerified, setOtpVerified] = useState(false);
-  const [otpCode, setOtpCode] = useState('');
-  const [cooldown, setCooldown] = useState(0);
-  const [otpError, setOtpError] = useState('');
-  const [sendingOtp, setSendingOtp] = useState(false);
-  const [verifyingOtp, setVerifyingOtp] = useState(false);
-  const [confirmationResult, setConfirmationResult] = useState(null);
-  const timerRef = useRef(null);
-
   // File Upload State
   const [uploadingId, setUploadingId] = useState(false);
   const [uploadingProof, setUploadingProof] = useState(false);
@@ -52,21 +40,8 @@ export default function HostOnboarding() {
         phone: user.phone || '',
         email: user.email || ''
       }));
-      if (user.phoneVerified) {
-        setOtpVerified(true);
-      }
     }
   }, [user]);
-
-  // Cooldown Timer
-  useEffect(() => {
-    if (cooldown > 0) {
-      timerRef.current = setTimeout(() => setCooldown(cooldown - 1), 1000);
-    } else {
-      clearTimeout(timerRef.current);
-    }
-    return () => clearTimeout(timerRef.current);
-  }, [cooldown]);
 
   // Bind Google Places Autocomplete to the street address input field
   useEffect(() => {
@@ -104,10 +79,6 @@ export default function HostOnboarding() {
   };
 
   const nextStep = () => {
-    if (step === 1 && !otpVerified) {
-      setError('Please verify your phone number via OTP to continue.');
-      return;
-    }
     if (step === 2 && (!formData.govIdNumber || !formData.govIdImage)) {
       setError('Please provide your Government ID number and upload a clear document image.');
       return;
@@ -127,55 +98,6 @@ export default function HostOnboarding() {
   const prevStep = () => {
     setError('');
     setStep(prev => prev - 1);
-  };
-
-  // OTP Handlers — real Firebase Phone Auth (real SMS), linked to the already-signed-in
-  // Firebase account (see services/firebase.js for why linkWithPhoneNumber, not signIn).
-  const handleSendOtp = async () => {
-    if (!formData.phone) {
-      setOtpError('Phone number is required');
-      return;
-    }
-    setSendingOtp(true);
-    setOtpError('');
-    try {
-      const e164Phone = formData.phone.replace(/[\s-]/g, '');
-      const confirmation = await sendPhoneOtp(e164Phone, 'host-recaptcha-container');
-      setConfirmationResult(confirmation);
-      setOtpSent(true);
-      setCooldown(60);
-    } catch (err) {
-      console.error(err);
-      setOtpError(err.message || 'Failed to send OTP. Please check the phone number and try again.');
-    } finally {
-      setSendingOtp(false);
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    if (!otpCode) {
-      setOtpError('Enter the 6-digit OTP code');
-      return;
-    }
-    if (!confirmationResult) {
-      setOtpError('Please request a new code.');
-      return;
-    }
-    setVerifyingOtp(true);
-    setOtpError('');
-    try {
-      const { idToken } = await confirmPhoneOtp(confirmationResult, otpCode);
-      // Re-sync our session so the backend records phoneVerified:true from Firebase's
-      // own verified claim — never from a client-asserted boolean.
-      const res = await exchangeFirebaseToken(idToken);
-      updateUser(res.data.user);
-      setOtpVerified(true);
-    } catch (err) {
-      console.error(err);
-      setOtpError(err.message || 'Invalid or expired code.');
-    } finally {
-      setVerifyingOtp(false);
-    }
   };
 
   // File Upload Handlers
@@ -321,61 +243,15 @@ export default function HostOnboarding() {
                )}
               <AnimatePresence mode="wait">
                  
-                 {/* STEP 1: CONTACT & OTP GATE */}
+                 {/* STEP 1: CONTACT INFO */}
                  {step === 1 && (
                    <motion.div key="1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
                       <h2 className="text-2xl font-semibold text-slate-900">Verification Basics.</h2>
-                      <p className="text-slate-500 mb-6">Confirm your contact information and verify your phone number via OTP to start listing.</p>
+                      <p className="text-slate-500 mb-6">Confirm your contact information to start listing.</p>
 
                       <Input label="Full Name" name="name" icon="person" placeholder="John Doe" value={formData.name} onChange={handleChange} required />
 
-                      {/* Invisible reCAPTCHA required by Firebase Phone Auth — renders nothing visible */}
-                      <div id="host-recaptcha-container"></div>
-
-                      <div className="flex gap-2 items-end">
-                        <div className="flex-1">
-                          <Input label="Phone Number" name="phone" icon="call" type="tel" placeholder="+91 99999 99999" value={formData.phone} onChange={handleChange} required disabled={otpVerified} />
-                        </div>
-                        {!otpVerified && (
-                          <Button
-                            variant="outline"
-                            onClick={handleSendOtp}
-                            disabled={sendingOtp || cooldown > 0}
-                            className="h-[46px] text-xs font-semibold px-4"
-                          >
-                            {cooldown > 0 ? `Resend (${cooldown}s)` : sendingOtp ? 'Sending...' : otpSent ? 'Resend OTP' : 'Send OTP'}
-                          </Button>
-                        )}
-                      </div>
-
-                      {otpSent && !otpVerified && (
-                        <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
-                          <Input
-                            label="Enter 6-Digit OTP"
-                            name="otpCode"
-                            icon="lock"
-                            placeholder="Enter 6-digit OTP"
-                            value={otpCode}
-                            onChange={(e) => setOtpCode(e.target.value)}
-                          />
-                          {otpError && <p className="text-red-600 text-xs font-semibold">{otpError}</p>}
-                          <Button
-                            variant="primary"
-                            onClick={handleVerifyOtp}
-                            disabled={verifyingOtp}
-                            className="w-full text-xs py-2.5"
-                          >
-                            {verifyingOtp ? 'Verifying...' : 'Verify Phone OTP'}
-                          </Button>
-                        </div>
-                      )}
-
-                      {otpVerified && (
-                        <div className="p-4 bg-parking-50 border border-parking-100 text-parking-700 rounded-lg text-sm flex items-center gap-2">
-                          <span className="material-symbols-outlined text-[18px]">verified</span>
-                          Phone Number Verified Successfully
-                        </div>
-                      )}
+                      <Input label="Phone Number" name="phone" icon="call" type="tel" placeholder="+91 99999 99999" value={formData.phone} onChange={handleChange} required />
 
                       <Input label="Email Address" name="email" icon="mail" type="email" placeholder="john@example.com" value={formData.email} onChange={handleChange} required />
                    </motion.div>

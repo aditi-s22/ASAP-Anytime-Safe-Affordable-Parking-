@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema({
   },
   phoneVerified: {
     type: Boolean,
-    default: false
+    default: true
   },
   emailVerified: {
     type: Boolean,
